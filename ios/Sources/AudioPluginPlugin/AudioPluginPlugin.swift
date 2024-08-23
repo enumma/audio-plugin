@@ -11,38 +11,46 @@ public class AudioPluginPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "AudioPluginPlugin"
     public let jsName = "AudioPlugin"
     public let pluginMethods: [CAPPluginMethod] = [
-        CAPPluginMethod(name: "echo", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "setupNotifications", returnType: CAPPluginReturnPromise)
     ]
-    private let implementation = AudioPlugin()
 
-    @objc func echo(_ call: CAPPluginCall) {
-        do {
-            let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .allowBluetoothA2DP])
-            try audioSession.setActive(true)
+    var headphonesConnected: Bool = false;
 
-            // Optionally handle route changes or additional setup
-            call.resolve(["status": "Audio session configured"])
-        } catch {
-            call.reject("Error configuring audio session: \(error)")
-        }
-        let value = call.getString("value") ?? ""
-        call.resolve([
-            "value": implementation.echo(value)
-        ])
-    }
-
-    func setupNotifications(_ call: CAPPluginCall) {
+    @objc func setupNotifications(_ call: CAPPluginCall) {
+        // Check the current audio route immediately
+        checkCurrentAudioRoute()
         // Get the default notification center instance.
         let nc = NotificationCenter.default
         nc.addObserver(self,
                     selector: #selector(handleRouteChange),
                     name: AVAudioSession.routeChangeNotification,
                     object: nil)
-        call.resolve();
+        call.resolve(["status": "Audio session configured"]);
     }
 
-    var headphonesConnected: Bool = false;
+    func checkCurrentAudioRoute() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+          // session.setCategoryOptions(.allowBluetooth)
+            try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothA2DP, .mixWithOthers])
+            try session.setActive(true)
+            try session.overrideOutputAudioPort(.none) // Ensures audio stays on the current output
+        } catch {
+            print("Error setting audio session: \(error)")
+        }
+
+        headphonesConnected = hasHeadphones(in: session.currentRoute)
+
+        // Optionally, notify JavaScript about the initial status
+        notifyListeners("headphonesStatusChanged", data: ["connected": headphonesConnected])
+
+        // If headphones are connected, adjust the audio session settings
+        if headphonesConnected {
+            print("Headphones detected!")
+        } else {
+          print("Headphones not detected!")
+        }
+    }
 
     @objc func handleRouteChange(notification: Notification) {
         guard let userInfo = notification.userInfo,
@@ -53,24 +61,54 @@ public class AudioPluginPlugin: CAPPlugin, CAPBridgedPlugin {
         
         // Switch over the route change reason.
         switch reason {
-
-
         case .newDeviceAvailable: // New device found.
-            let session = AVAudioSession.sharedInstance()
-            headphonesConnected = hasHeadphones(in: session.currentRoute)
-        
+          let session = AVAudioSession.sharedInstance()
+          headphonesConnected = hasHeadphones(in: session.currentRoute)
         case .oldDeviceUnavailable: // Old device removed.
             if let previousRoute =
                 userInfo[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription {
                 headphonesConnected = hasHeadphones(in: previousRoute)
             }
-        
-        default: ()
+        default:
+          checkCurrentAudioRoute()
         }
+
+        let reasonText = getRouteChangeReasonText(reason: reason)
+        print("Audio route changed for reason: \(reasonText)")
+
+        // Optionally, notify JavaScript about the change
+        notifyListeners("headphonesStatusChanged", data: ["connected": headphonesConnected])
     }
 
     func hasHeadphones(in routeDescription: AVAudioSessionRouteDescription) -> Bool {
-        // Filter the outputs to only those with a port type of headphones.
-        return !routeDescription.outputs.filter({$0.portType == .headphones}).isEmpty
+      // Filter the outputs to only those with a port type of headphones.
+      return !routeDescription.outputs.filter({$0.portType == .headphones}).isEmpty
+    }
+
+    func getRouteChangeReasonText(reason: AVAudioSession.RouteChangeReason) -> String {
+      switch reason {
+      case .unknown:
+          return "Unknown"
+      case .newDeviceAvailable:
+          return "New Device Available"
+      case .oldDeviceUnavailable:
+          return "Old Device Unavailable"
+      case .categoryChange:
+          return "Category Change"
+      case .override:
+          return "Override"
+      case .wakeFromSleep:
+          return "Wake from Sleep"
+      case .noSuitableRouteForCategory:
+          return "No Suitable Route for Category"
+      case .routeConfigurationChange:
+          return "Route Configuration Change"
+      @unknown default:
+          return "Unknown Reason"
+      }
+  }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self, name: AVAudioSession.routeChangeNotification, object: nil)
     }
 }
