@@ -7,4 +7,7 @@ export class AudioPluginWeb extends WebPlugin implements AudioPluginPlugin {
     console.log('ECHO', options);
     return options;
   }
+  async setupNotifications(): Promise<void> {
+    return;
+  }
 }
