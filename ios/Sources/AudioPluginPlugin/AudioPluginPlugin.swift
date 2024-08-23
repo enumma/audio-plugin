@@ -17,8 +17,17 @@ public class AudioPluginPlugin: CAPPlugin, CAPBridgedPlugin {
     var headphonesConnected: Bool = false;
 
     @objc func setupNotifications(_ call: CAPPluginCall) {
-        // Check the current audio route immediately
+        let session = AVAudioSession.sharedInstance()
+        do {
+          try session.setActive(false)
+          try session.setCategory(.playAndRecord, mode: .videoChat, options: [.allowBluetooth, .allowAirPlay, .mixWithOthers, .defaultToSpeaker])
+          try session.setActive(true)
+          try session.overrideOutputAudioPort(.none)
+        } catch {
+            print("Error setting audio session: \(error)")
+        }
         checkCurrentAudioRoute()
+
         // Get the default notification center instance.
         let nc = NotificationCenter.default
         nc.addObserver(self,
@@ -30,26 +39,15 @@ public class AudioPluginPlugin: CAPPlugin, CAPBridgedPlugin {
 
     func checkCurrentAudioRoute() {
         let session = AVAudioSession.sharedInstance()
-        do {
-          // session.setCategoryOptions(.allowBluetooth)
-            try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothA2DP, .mixWithOthers])
-            try session.setActive(true)
-            try session.overrideOutputAudioPort(.none) // Ensures audio stays on the current output
-        } catch {
-            print("Error setting audio session: \(error)")
-        }
-
         headphonesConnected = hasHeadphones(in: session.currentRoute)
-
-        // Optionally, notify JavaScript about the initial status
-        notifyListeners("headphonesStatusChanged", data: ["connected": headphonesConnected])
 
         // If headphones are connected, adjust the audio session settings
         if headphonesConnected {
-            print("Headphones detected!")
+          print("Headphones detected!")
         } else {
           print("Headphones not detected!")
         }
+        print(session.currentRoute.outputs)
     }
 
     @objc func handleRouteChange(notification: Notification) {
@@ -64,6 +62,7 @@ public class AudioPluginPlugin: CAPPlugin, CAPBridgedPlugin {
         case .newDeviceAvailable: // New device found.
           let session = AVAudioSession.sharedInstance()
           headphonesConnected = hasHeadphones(in: session.currentRoute)
+          print(session.currentRoute.outputs)
         case .oldDeviceUnavailable: // Old device removed.
             if let previousRoute =
                 userInfo[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription {
@@ -75,9 +74,6 @@ public class AudioPluginPlugin: CAPPlugin, CAPBridgedPlugin {
 
         let reasonText = getRouteChangeReasonText(reason: reason)
         print("Audio route changed for reason: \(reasonText)")
-
-        // Optionally, notify JavaScript about the change
-        notifyListeners("headphonesStatusChanged", data: ["connected": headphonesConnected])
     }
 
     func hasHeadphones(in routeDescription: AVAudioSessionRouteDescription) -> Bool {
